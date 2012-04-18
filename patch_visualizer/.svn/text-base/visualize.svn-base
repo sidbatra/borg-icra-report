@@ -1,0 +1,118 @@
+#!/usr/bin/env ruby
+require 'rexml/document'
+require 'rubygems'
+require 'RMagick'
+include Magick
+  
+SCALE = 4
+
+puts "hello world"
+doc = REXML::Document.new(File.open("dict.mug.txt",'r'))
+
+patches_xml = []
+doc.elements.each('PatchDictionary/PatchDefinition') { |p| patches_xml << p }
+puts "found #{patches_xml.size} patches"
+
+patches = []
+patches_xml.each do |p|
+  q = { }
+  size_str = p.attributes["size"]
+  q['w'], q['h'] = p.attributes["size"].scan(/\d+/).collect { |s| s.to_i }
+  q['x'], q['y'] = p.attributes["validRect"].scan(/\d+/).collect { |s| s.to_i }
+  q['type'] = p.attributes['type']
+  q['channel'] = p.attributes['channel'].to_i
+  q['x'] = q['x'] + 3
+  q['y'] = q['y'] + 3
+  #puts "#{q['x']} #{q['y']} #{q['w']} #{q['h']} #{q['type']}"
+  pixels = []
+  if q['type'] != "depth"
+    p.text.split(nil).each { |s| pixels << s.to_f / 255.0 }
+    #max_v, min_v = pixels.max, pixels.min
+    #puts "#{max_v} to #{min_v}"
+    #pixels = pixels.collect { |v| (v + 0.0 - min_v) / (max_v - min_v) }
+  else
+    p.text.split(nil).each { |s| pixels << s.to_f }
+    #max_v, min_v = pixels.max, pixels.min
+    #pixels = pixels.collect { |v| (v + 0.0 - min_v) / (max_v - min_v) * 0.5 + 0.5}
+    pixels = pixels.collect { |v| v * 2.2 + 0.5}
+  end
+  #puts "#{q['w']} by #{q['h']}"
+  q['patch'] = Image.constitute(q['w'], q['h'], "I", pixels)
+  img = ImageList.new
+  img.new_image(32, 32) { self.background_color = "white" }
+  pixels_magick = pixels.collect{|pix| v = (pix*65535).to_f; Pixel.new(v,v,v,0)}
+  img.store_pixels(q['x'], q['y'], q['w'], q['h'], pixels_magick)
+  img = img.scale(SCALE)
+  gc = Draw.new
+  gc.fill_opacity(0)
+  gc.stroke('white')
+  ulx = q['x']*SCALE
+  uly = q['y']*SCALE
+  lrx = (q['x']+q['w'])*SCALE-1
+  lry = (q['y']+q['h'])*SCALE-1
+  gc.rectangle(ulx, uly, lrx, lry)
+  gc.draw(img)
+  q['image'] = img
+  #patches << q if (q['type'] == 'intensity' && q['channel'] == 1) # gradient
+  patches << q if (q['type'] == 'intensity' && q['channel'] == 0)  # intensity
+  #patches << q if (q['type'] == 'depth')
+
+end
+
+# for gradient figure
+#patches = [patches[1], patches[2], patches[10], patches[12], patches[18], patches[19]]
+# for intensity figure
+patches = [patches[9], patches[49], patches[50], patches[57]]
+#patches = [patches[9], patches[49], patches[41], patches[12], patches[50], patches[57]]
+# for depth figure
+#patches = [patches[1], patches[11], patches[19], patches[4], patches[24], patches[18]]
+#
+NUM_ROWS = 2
+NUM_COLS = 3
+
+divider_color = 'black'
+img = ImageList.new
+img.new_image(32*SCALE*NUM_COLS, 32*SCALE*NUM_ROWS)
+NUM_ROWS.times do |y|
+  NUM_COLS.times do |x|
+    ulx = x * SCALE * 32
+    uly = y * SCALE * 32
+    i = y * NUM_COLS + x
+    if (i >= patches.length)
+      gc = Draw.new
+      gc.fill_opacity(1.0)
+      gc.stroke('gray')
+      gc.fill('gray')
+      gc.rectangle(ulx, uly, ulx + SCALE * 32, uly + SCALE * 32)
+      gc.draw(img)
+      next
+    end
+    #puts "i = #{i} ulx, uly = #{ulx}, #{uly}"
+    img.store_pixels(ulx, uly, SCALE * 32, SCALE * 32, patches[i]['image'].get_pixels(0, 0, SCALE * 32, SCALE * 32))
+  end
+  gc = Draw.new
+  gc.stroke(divider_color)
+  gc.line(0, y * SCALE * 32, NUM_COLS * SCALE * 32 - 1, y * SCALE * 32)
+  gc.draw(img)
+end
+
+NUM_COLS.times do |x|
+  gc = Draw.new
+  gc.stroke(divider_color)
+  gc.line(x * SCALE * 32, 0, x * SCALE * 32, NUM_ROWS * SCALE * 32)
+  gc.draw(img)
+end
+
+gc = Draw.new
+gc.stroke(divider_color)
+gc.fill_opacity(0)
+gc.rectangle(0, 0, NUM_COLS * SCALE * 32 - 1, NUM_ROWS * SCALE * 32 - 1)
+gc.draw(img)
+
+img.display
+img.write("out.png")
+
+#patches[2]['image'].display
+#patches.each do |p|
+#  p['image'].scale(10).display
+#end
